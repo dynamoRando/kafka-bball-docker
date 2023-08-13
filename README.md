@@ -833,6 +833,108 @@ ksql>
 
 This isn't ideal, but it is one way to make this work in ksql. One important thing to note is that with JOINs you want to make sure that the table on the _right_ side of the JOIN is leveraging the Primary Key when going TABLE-TABLE for foreign key relationships. For more information, see [here](https://docs.ksqldb.io/en/latest/developer-guide/joins/join-streams-and-tables/#table-table-joins). In our examples above, the FK was on the left side of the join in `T_GAME` for `away_team_id` and `home_team_id` and the PK was from `T_TEAM` for the team's `id`.
 
+### Other tables
+
+Some more contrived examples would be creating tables for players by the types of points they scored: 3pts, 2pts, 1pt, and then comparing those tables. Ideally, you'd just do this all in one table, but we'll do this specifically to practice LEFT JOINs.
+
+For example, you normally might do something like this:
+
+```
+CREATE TABLE T_PLAYER_POINT_TOTALS AS SELECT PLAYER_ID, SUM(POINTS) TOTAL_POINTS, SUM(CASE WHEN POINTS=3 THEN 1 ELSE 0 END) THREE_PTS, SUM(CASE WHEN POINTS=2 THEN 1 ELSE 0 END) TWO_PTS, SUM(CASE WHEN POINTS=1 THEN 1 ELSE 0 END) ONE_PTS FROM T_GAME_LOG GROUP BY PLAYER_ID;
+```
+
+For this example though, we'll compare players who made 3 pointers to free throws (1 point):
+
+```
+CREATE TABLE T_PLAYER_THREE_POINT_TOTALS AS SELECT PLAYER_ID, SUM(CASE WHEN POINTS=3 THEN 1 ELSE 0 END) THREE_PTS FROM T_GAME_LOG GROUP BY PLAYER_ID;
+CREATE TABLE T_PLAYER_ONE_POINT_TOTALS AS SELECT PLAYER_ID, SUM(CASE WHEN POINTS=1 THEN 1 ELSE 0 END) ONE_PTS FROM T_GAME_LOG GROUP BY PLAYER_ID;
+```
+
+We can then create a table that performs a LEFT JOIN to compare 3 point shooting against free throws:
+
+```
+CREATE TABLE T_PLAYER_THREE_TO_ONE_STATS AS SELECT T.PLAYER_ID, T.THREE_PTS, O.ONE_PTS FROM T_PLAYER_THREE_POINT_TOTALS T LEFT JOIN T_PLAYER_ONE_POINT_TOTALS O ON T.PLAYER_ID = O.PLAYER_ID;
+```
+
+> Note: The sim obviously assumes that a player only scored one free throw per posession; again, this is just a sim meant to generate some example data, not really meant to sim a realistic basketball game.
+
+### Sink topic back into MySQL
+
+If you created the table `T_PLAYER_POINT_TOTALS` in ksql, let's sink that data back into MySQL so we can leverage things like `ORDER BY`, etc.
+
+First, in MySQL we'll create the backing table:
+
+```
+CREATE TABLE T_PLAYER_POINT_TOTALS (PLAYER_ID BIGINT PRIMARY KEY NOT NULL, TOTAL_POINTS BIGINT, THREE_PTS INT, TWO_PTS INT, ONE_PTS INT);
+```
+
+This is intended to match the topic in ksql:
+
+```
+ksql> DESCRIBE T_PLAYER_POINT_TOTALS;
+
+Name                 : T_PLAYER_POINT_TOTALS
+ Field        | Type                           
+-----------------------------------------------
+ PLAYER_ID    | BIGINT           (primary key) 
+ TOTAL_POINTS | BIGINT                         
+ THREE_PTS    | INTEGER                        
+ TWO_PTS      | INTEGER                        
+ ONE_PTS      | INTEGER                        
+-----------------------------------------------
+For runtime statistics and query details run: DESCRIBE <Stream,Table> EXTENDED;
+ksql> 
+```
+
+Next, create a new Connector in Kafka Connect either by using Kafka UI in your browser, or alternatively using `curl` from earlier, using `mysql-bball-sink` as the name for the connector:
+
+```
+{
+	"connector.class": "io.confluent.connect.jdbc.JdbcSinkConnector",
+	"tasks.max": "1",
+	"topics": "T_PLAYER_POINT_TOTALS",
+	"transforms": "unwrap",
+	"delete.enabled": "true",
+	"transforms.unwrap.drop.tombstones": "false",
+	"name": "mysql-bball-sink",
+	"transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
+	"auto.create": "true",
+	"connection.url": "jdbc:mysql://db:3306/bball?user=bball&password=bball",
+	"insert.mode": "upsert",
+	"key.converter": "org.apache.kafka.connect.converters.LongConverter",
+	"pk.mode": "record_key",
+	"pk.fields": "player_id"
+}
+```
+
+If all goes correctly, we should have data in MySQL:
+
+```
+mysql> SELECT * FROM T_PLAYER_POINT_TOTALS;
++-----------+--------------+-----------+---------+---------+
+| PLAYER_ID | TOTAL_POINTS | THREE_PTS | TWO_PTS | ONE_PTS |
++-----------+--------------+-----------+---------+---------+
+|        16 |           11 |         1 |       3 |       2 |
+|        17 |            6 |         0 |       2 |       2 |
+|        21 |           16 |         4 |       1 |       2 |
+|        22 |           14 |         3 |       2 |       1 |
+|        28 |           18 |         3 |       4 |       1 |
+|        29 |           10 |         1 |       3 |       1 |
+|        30 |           11 |         2 |       1 |       3 |
+|        61 |           13 |         1 |       3 |       4 |
+|        63 |            7 |         0 |       2 |       3 |
+|        64 |            2 |         0 |       1 |       0 |
+|        66 |            4 |         1 |       0 |       1 |
+|        67 |            9 |         0 |       3 |       3 |
+|        69 |           15 |         3 |       2 |       2 |
+|        70 |           10 |         3 |       0 |       1 |
+|        75 |           27 |         7 |       3 |       0 |
+|       108 |            4 |         0 |       1 |       2 |
+|       111 |            7 |         0 |       2 |       3 |
+|       113 |            5 |         1 |       0 |       2 |
+-- snip --
+```
+
 # Analytics
 
 Some analytic questions that would be nice to cover in ksql and MySQL, leveraging what we've learned about streams and tables:
@@ -845,6 +947,6 @@ Some analytic questions that would be nice to cover in ksql and MySQL, leveragin
 
 Reviewing our data model from earlier, we should be able to obtain this information by using the `GAME` and `GAME_LOG` table as our primary sources, while complimenting our data by leveraging the `TEAM` and `PLAYER` tables for our actual team and player names.
 
-Some to-do's for this repo are trying to invent analytic questions that involve a LEFT JOIN, and so on.
+Note that ksql doesn't (and probably won't) have feature parity with relational databases such as MySQL. For example, at the time of this writing, there isn't an `ORDER BY` keyword that will operate against tables, similar to what you'd do in a RMDBS.
 
 Have fun!

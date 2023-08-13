@@ -145,12 +145,18 @@ services:
     volumes:
       - $PWD/data:/data
     # In the command section, $ are replaced with $$ to avoid the error 'Invalid interpolation format for "command" option'
+    # To make the kafka-connect-jdbc connector work with MySQL we also have to download the JAR for the drivers for MySQL 
+    # And place it in the location of confluent hub _AFTER_ it has been installed
     command:
       - bash
       - -c
       - |
         echo "Installing Connector"
         confluent-hub install --no-prompt debezium/debezium-connector-mysql:1.7.0
+        confluent-hub install --no-prompt confluentinc/kafka-connect-jdbc:latest
+        #
+        echo "Get MySQL drivers"
+        curl -o /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/mysql.jar https://repo1.maven.org/maven2/mysql/mysql-connector-java/8.0.30/mysql-connector-java-8.0.30.jar
         #
         echo "Launching Kafka Connect worker"
         /etc/confluent/docker/run &
