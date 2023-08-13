@@ -26,8 +26,8 @@ db = mysql.connector.connect(
 
 
 def get_new_game_teams(db: MySQLConnection) -> (int, int):
-    a = random.randint(1, 30)
-    b = random.randint(1, 30)
+    a = random.randint(1, total_teams)
+    b = random.randint(1, total_teams)
 
     print(f"Looking for active games between {(a, b)}")
 
