@@ -1,0 +1,226 @@
+version: "3.9"
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - default
+    ports:
+      - 22181:2181
+
+  kafka-1:
+    image: confluentinc/cp-kafka:latest
+    depends_on:
+      - zookeeper
+    container_name: kafka-1
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,OUTSIDE://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-1:9092,OUTSIDE://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,OUTSIDE:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    networks:
+      - default
+    ports:
+      - 29092:29092
+
+  kafka-2:
+    image: confluentinc/cp-kafka:latest
+    depends_on:
+      - zookeeper
+      - kafka-1
+    container_name: kafka-2
+    environment:
+      KAFKA_BROKER_ID: 2
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9093,OUTSIDE://0.0.0.0:29093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-2:9093,OUTSIDE://localhost:29093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,OUTSIDE:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    networks:
+      - default
+    ports:
+      - 29093:29093
+
+  kafka-3:
+    image: confluentinc/cp-kafka:latest
+    depends_on:
+      - zookeeper
+      - kafka-1
+      - kafka-2
+    container_name: kafka-3
+    environment:
+      KAFKA_BROKER_ID: 3
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9094,OUTSIDE://0.0.0.0:29094
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-3:9094,OUTSIDE://localhost:29094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,OUTSIDE:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    networks:
+      - default
+    ports:
+      - 29094:29094
+
+  schema-registry:
+    container_name: schema-registry
+    image: confluentinc/cp-schema-registry:latest
+    ports:
+      - 8081:8081
+    depends_on:
+      - zookeeper
+      - kafka-1
+      - kafka-2
+      - kafka-3
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka-1:9092
+
+  ksqldb-server-1:
+    image: confluentinc/ksqldb-server:latest
+    container_name: ksqldb-server-1
+    depends_on:
+      - zookeeper
+      - kafka-1
+      - kafka-2
+      - kafka-3
+      - schema-registry
+    ports:
+      - 8088:8088
+    environment:
+      KSQL_LISTENERS: http://0.0.0.0:8088
+      KSQL_BOOTSTRAP_SERVERS: kafka-1:9092
+      KSQL_KSQL_LOGGING_PROCESSING_STREAM_AUTO_CREATE: "true"
+      KSQL_KSQL_LOGGING_PROCESSING_TOPIC_AUTO_CREATE: "true"
+      KSQL_KSQL_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+    networks:
+      - default
+
+  ksqldb-cli-1:
+    image: confluentinc/ksqldb-cli:latest
+    container_name: ksqldb-cli-1
+    depends_on:
+      - ksqldb-server-1
+    entrypoint: /bin/sh
+    tty: true
+    networks:
+      - default
+
+  kafka-connect-1:
+    image: confluentinc/cp-kafka-connect-base:6.2.0
+    container_name: kafka-connect-1
+    depends_on:
+      - kafka-1
+      - kafka-2
+      - kafka-3
+      - schema-registry
+    ports:
+      - 8083:8083
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: kafka-1:9092
+      CONNECT_REST_PORT: 8083
+      CONNECT_GROUP_ID: kafka-connect-1
+      CONNECT_CONFIG_STORAGE_TOPIC: _connect-configs
+      CONNECT_OFFSET_STORAGE_TOPIC: _connect-offsets
+      CONNECT_STATUS_STORAGE_TOPIC: _connect-status
+      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.storage.StringConverter
+      CONNECT_VALUE_CONVERTER: io.confluent.connect.avro.AvroConverter
+      CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: 'http://schema-registry:8081'
+      CONNECT_REST_ADVERTISED_HOST_NAME: "kafka-connect-1"
+      CONNECT_LOG4J_APPENDER_STDOUT_LAYOUT_CONVERSIONPATTERN: "[%d] %p %X{connector.context}%m (%c:%L)%n"
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: "1"
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: "1"
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: "1"
+      #  ---------------
+      CONNECT_PLUGIN_PATH: /usr/share/java,/usr/share/confluent-hub-components,/data/connect-jars
+    # If you want to use the Confluent Hub installer to d/l component, but make them available
+    # when running this offline, spin up the stack once and then run : 
+    #   docker cp kafka-connect:/usr/share/confluent-hub-components ./data/connect-jars
+    volumes:
+      - $PWD/data:/data
+    # In the command section, $ are replaced with $$ to avoid the error 'Invalid interpolation format for "command" option'
+    command:
+      - bash
+      - -c
+      - |
+        echo "Installing Connector"
+        confluent-hub install --no-prompt debezium/debezium-connector-mysql:1.7.0
+        #
+        echo "Launching Kafka Connect worker"
+        /etc/confluent/docker/run &
+        #
+        sleep infinity
+
+  # kafka-connect-2:
+  #   image: confluentinc/cp-kafka-connect-base:6.2.0
+  #   container_name: kafka-connect-2
+  #   depends_on:
+  #     - kafka-1
+  #     - kafka-2
+  #     - kafka-3
+  #     - schema-registry
+  #   ports:
+  #     - 8084:8083
+  #   environment:
+  #     CONNECT_BOOTSTRAP_SERVERS: kafka-2:9093
+  #     CONNECT_REST_PORT: 8084
+  #     CONNECT_GROUP_ID: kafka-connect-2
+  #     CONNECT_CONFIG_STORAGE_TOPIC: _connect-configs
+  #     CONNECT_OFFSET_STORAGE_TOPIC: _connect-offsets
+  #     CONNECT_STATUS_STORAGE_TOPIC: _connect-status
+  #     CONNECT_KEY_CONVERTER: org.apache.kafka.connect.storage.StringConverter
+  #     CONNECT_VALUE_CONVERTER: io.confluent.connect.avro.AvroConverter
+  #     CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: 'http://schema-registry:8081'
+  #     CONNECT_REST_ADVERTISED_HOST_NAME: "kafka-connect-2"
+  #     CONNECT_LOG4J_APPENDER_STDOUT_LAYOUT_CONVERSIONPATTERN: "[%d] %p %X{connector.context}%m (%c:%L)%n"
+  #     CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: "1"
+  #     CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: "1"
+  #     CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: "1"
+  #     #  ---------------
+  #     CONNECT_PLUGIN_PATH: /usr/share/java,/usr/share/confluent-hub-components,/data/connect-jars
+  #   # If you want to use the Confluent Hub installer to d/l component, but make them available
+  #   # when running this offline, spin up the stack once and then run : 
+  #   #   docker cp kafka-connect:/usr/share/confluent-hub-components ./data/connect-jars
+  #   volumes:
+  #     - $PWD/data:/data
+  #   # In the command section, $ are replaced with $$ to avoid the error 'Invalid interpolation format for "command" option'
+  #   command:
+  #     - bash
+  #     - -c
+  #     - |
+  #       echo "Installing Connector"
+  #       confluent-hub install --no-prompt debezium/debezium-connector-mysql:1.7.0
+  #       #
+  #       echo "Launching Kafka Connect worker"
+  #       /etc/confluent/docker/run &
+  #       #
+  #       sleep infinity
+
+  kafka-ui:
+    container_name: kafka-ui
+    image: provectuslabs/kafka-ui:latest
+    ports:
+      - 8080:8080
+    environment:
+      DYNAMIC_CONFIG_ENABLED: 'true'
+
+  db:
+    container_name: db
+    image: mysql:8.0
+    cap_add:
+      - SYS_NICE
+    environment:
+      - MYSQL_USER=bball
+      - MYSQL_PASSWORD=bball
+      - MYSQL_DATABASE=bball
+      - MYSQL_ROOT_PASSWORD=bball
+    ports:
+      - 23306:3306
+    networks:
+      - default
