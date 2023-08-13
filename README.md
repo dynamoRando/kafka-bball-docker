@@ -41,7 +41,7 @@ At the start of each simulated team possession, the sim will:
 - If the game clock has ended (i.e the 4th quarter has finished with 10 simulated minutes elapsed) the game is over, and upon the next tick the game will create a new game to simulate and save that game state.
     - To create a new game, the sim will randomly try to search for two teams who are not actively playing each other and are not actively playing. It will loop until it can find a set of teams to meet these conditions.
 
-The sim ends its run once all 72 games have been simulated. Note that the sim never exists, it just prints out "Season has ended..." if there are no more games to simulate.
+The sim ends its run once all 72 games have been simulated. Note that the sim never exits, it just prints out "Season has ended..." if there are no more games to simulate.
 
 The team and player names are auto generated using the `names` and `randomname` libraries from Python.
 
