@@ -82,6 +82,7 @@ def init_database(db):
     );
     """
     cur.execute(sql)
+    db.commit()
 
     sql = """
    CREATE TABLE IF NOT EXISTS GAME_LOG 
@@ -97,5 +98,6 @@ def init_database(db):
    );
     """
     cur.execute(sql)
+    db.commit()
 
 init_database(db)
